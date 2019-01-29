@@ -1,0 +1,29 @@
+{{- if .Values.application.autoscaling.enabled }}
+apiVersion: autoscaling/v2beta1
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ template "fullname" . }}-application
+  labels:
+    app.kubernetes.io/name: {{ include "name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/part-of: {{ .Chart.Name }}
+    app.kubernetes.io/version: {{ .Chart.Version | replace "+" "_" }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/component: application
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ template "fullname" . }}-application
+  minReplicas: {{ .Values.application.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.application.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        targetAverageUtilization: {{ .Values.application.autoscaling.targetCPUUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: memory
+        targetAverageUtilization: {{ .Values.application.autoscaling.targetMemoryUtilizationPercentage }}
+{{- end }}

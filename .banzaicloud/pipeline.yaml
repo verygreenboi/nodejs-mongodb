@@ -1,0 +1,153 @@
+pipeline:
+  create_cluster:
+    image: banzaicloud/ci-pipeline-client:0.8
+    cluster:
+      name: verygreenboi79cg
+      location: us-central1-a
+      cloud: google
+      secretId: 6e972ac96868015a43c062454a366490fe3adaab47de9dbd14ae6e7f404123d2
+      secretName: ""
+      profileName: ""
+      postHooks:
+        InstallLogging:
+          bucketName: dealpal-bucket
+          secretId: 6e972ac96868015a43c062454a366490fe3adaab47de9dbd14ae6e7f404123d2
+        InstallMonitoring:
+          enabled: true
+      properties:
+        gke:
+          nodeVersion: "1.10"
+          nodePools:
+            pool1:
+              autoscaling: true
+              minCount: 1
+              maxCount: 2
+              count: 1
+              instanceType: g1-small
+              preemptible: true
+            pool2:
+              autoscaling: true
+              minCount: 1
+              maxCount: 2
+              count: 1
+              instanceType: g1-small
+              preemptible: true
+            system:
+              autoscaling: true
+              minCount: 1
+              maxCount: 2
+              count: 1
+              instanceType: n1-standard-2
+          master:
+            version: "1.10"
+          projectId: erudite-flag-229416
+    action: EnsureCluster
+  test:
+    image: node:10-slim
+    commands:
+    - npm ci
+    - npm test
+  build_image:
+    dockerfile: Dockerfile
+    image: plugins/docker
+    repo: '{{ .CICD_REPO }}'
+    secretFrom:
+      DOCKER_PASSWORD:
+        keyRef: password
+        name: docker-hub
+      DOCKER_USERNAME:
+        keyRef: username
+        name: docker-hub
+    tags: '{{ trunc 7 .CICD_COMMIT_SHA }}'
+  package_application:
+    when:
+      branch:
+        include:
+        - master
+    image: lachlanevenson/k8s-helm:latest
+    commands:
+    - helm init -c
+    - helm repo add banzaicloud-stable http://kubernetes-charts.banzaicloud.com/branch/master
+    - helm package ./.banzaicloud/charts/spotguide-nodejs-mongodb
+  install_mongodb_user_secret:
+    action: InstallSecret
+    clusterSecret:
+      merge: true
+      name: '{{ .CICD_REPO_NAME }}-mongodb'
+      namespace: default
+      sourceSecretName: nodejs-mongodb-mongodb
+      spec:
+      - name: mongodb-username
+        source: username
+      - name: mongodb-password
+        source: password
+    image: banzaicloud/ci-pipeline-client:0.8
+    when:
+      branch:
+        include:
+        - master
+  install_mongodb_root_secret:
+    when:
+      branch:
+        include:
+        - master
+    image: banzaicloud/ci-pipeline-client:0.8
+    action: InstallSecret
+    clusterSecret:
+      name: '{{ .CICD_REPO_NAME }}-mongodb'
+      namespace: default
+      merge: true
+      spec:
+      - name: mongodb-root-password
+        source: password
+  install_mongodb_replica_set_key_secret:
+    action: InstallSecret
+    clusterSecret:
+      merge: true
+      name: '{{ .CICD_REPO_NAME }}-mongodb'
+      namespace: default
+      sourceSecretName: nodejs-mongodb-mongodb-replicaset-key
+      spec:
+      - name: mongodb-replica-set-key
+        source: password
+    image: banzaicloud/ci-pipeline-client:0.8
+    when:
+      branch:
+        include:
+        - master
+  deploy_application:
+    action: EnsureDeployment
+    deployment:
+      name: ./spotguide-nodejs-mongodb-1.0.0.tgz
+      releaseName: '{{ .CICD_REPO_NAME }}'
+      reuseValues: true
+      timeout: 900
+      values:
+        application:
+          deployment:
+            image:
+              pullPolicy: Always
+              repository: '{{ .CICD_REPO }}'
+              tag: '{{ trunc 7 .CICD_COMMIT_SHA }}'
+          ingress:
+            annotations:
+              kubernetes.io/ingress.class: traefik
+              traefik.ingress.kubernetes.io/redirect-permanent: "true"
+              traefik.ingress.kubernetes.io/redirect-regex: ^http://(.*)
+              traefik.ingress.kubernetes.io/redirect-replacement: https://$1
+            hosts:
+            - app-{{.CICD_REPO_NAME}}.{{.CLUSTER_NAME}}.{{.ORG_NAME}}.{{.DOMAIN_NAME}}
+        mongodb:
+          existingSecret: '{{ .CICD_REPO_NAME }}-mongodb'
+          metrics:
+            enabled: true
+          mongodbDatabase: dealpal
+          replicaSet:
+            enabled: true
+          usePassword: true
+      wait: true
+    image: banzaicloud/ci-pipeline-client:0.8
+    when:
+      branch:
+        include:
+        - master
